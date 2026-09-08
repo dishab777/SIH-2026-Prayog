@@ -53,7 +53,14 @@ function startFetchFallback(): void {
         const result = await handler.run({ request: request.clone(), requestId: requestId() });
         if (result?.response) return result.response;
       }
-      return original(input as RequestInfo, init);
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: { code: 'NOT_FOUND', message: `No mock handler matches ${url.pathname}.` },
+          servedAt: new Date().toISOString(),
+        }),
+        { status: 404, headers: { 'Content-Type': 'application/json' } },
+      );
     }
 
     return original(input as RequestInfo, init);
@@ -61,24 +68,32 @@ function startFetchFallback(): void {
 }
 
 /**
- * Does the mock API actually answer?
+ * Start the mock API.
  *
- * `worker.start()` resolving says the registration succeeded. It does not say
- * the worker is controlling this page yet — after a hard reload, or while a
- * previous worker is shutting down, there is a window where requests go
- * straight past it to the dev server, which returns `index.html` for every
- * unknown path. One probe settles it.
+ * The patched fetch goes in FIRST, unconditionally, and that ordering is the
+ * whole point.
+ *
+ * This used to start the service worker, probe `/api/health` to see whether it
+ * was really intercepting, and only fall back to fetch if the probe failed.
+ * The probe is not a reliable answer. A worker can pass it and still drop the
+ * next request a few milliseconds later, while it is finishing activation —
+ * so the first screen of the session got `index.html` back, `JSON.parse` threw,
+ * and the sign-in page reported "The mock API has not started yet" over an
+ * empty account list. A reload fixed it, which is not something a demonstration
+ * should ever ask of anyone.
+ *
+ * Installing the patch first removes the race instead of timing it. Every
+ * `/api/*` call is answered in the page, by the same handlers, before it can
+ * reach the network at all. There is no window in which the app is running and
+ * the mock API is not.
+ *
+ * The worker still starts, and is still worth starting: it is what a request
+ * made outside this app's fetch wrapper would meet, and it keeps the network
+ * panel honest. It is simply no longer load-bearing.
  */
-async function intercepts(): Promise<boolean> {
-  try {
-    const response = await fetch('/api/health', { headers: { Accept: 'application/json' } });
-    return (response.headers.get('content-type') ?? '').includes('json');
-  } catch {
-    return false;
-  }
-}
-
 export async function startMockApi(): Promise<void> {
+  startFetchFallback();
+
   try {
     await worker.start({
       onUnhandledRequest: 'bypass',
@@ -86,25 +101,10 @@ export async function startMockApi(): Promise<void> {
       serviceWorker: { url: '/mockServiceWorker.js' },
     });
   } catch (error) {
-    console.warn('[prayog] Service worker unavailable; running the mock API through fetch instead.', error);
-    startFetchFallback();
-    return;
+    // Some embedded and sandboxed browsers refuse to register one at all. The
+    // patch above already has the app covered, so this is a note, not a fault.
+    console.warn('[prayog] Service worker unavailable; the mock API is running through fetch.', error);
   }
-
-  /*
-   * Started is not the same as intercepting. Give the worker a moment to take
-   * control, then check — and if it is not answering, use the fetch path
-   * rather than letting the first screen of the session fetch HTML and report
-   * an outage that is not happening.
-   */
-  if (await intercepts()) return;
-  await new Promise((resolve) => {
-    window.setTimeout(resolve, 120);
-  });
-  if (await intercepts()) return;
-
-  console.warn('[prayog] The service worker started but is not intercepting; running the mock API through fetch.');
-  startFetchFallback();
 }
 
 // Editing a handler replaces this module but not the running interceptor, which

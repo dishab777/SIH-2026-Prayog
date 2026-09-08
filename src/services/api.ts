@@ -23,33 +23,11 @@ export interface Fetched<T> {
   message?: string;
 }
 
-export function getAuthToken(): string | null {
-  try {
-    return typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
-  } catch {
-    return null;
-  }
-}
-
-export function setAuthToken(token: string | null): void {
-  try {
-    if (token) {
-      localStorage.setItem('auth_token', token);
-    } else {
-      localStorage.removeItem('auth_token');
-    }
-  } catch {
-    // Ignore in non-browser or sandboxed environments
-  }
-}
-
 async function call<T>(path: string, init?: RequestInit): Promise<Fetched<T>> {
-  const token = getAuthToken();
   const response = await fetch(path, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       /*
        * The language the reader is reading, so the API can answer in it. The
        * interface chrome translates through `t()`; the *content* — a challenge

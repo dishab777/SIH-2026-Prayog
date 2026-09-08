@@ -92,7 +92,9 @@ export const REACHES: readonly ReachDefinition[] = [
 ] as const;
 
 export function reachOf(role: Role): Reach {
-  return REACH[role];
+  // Same reasoning as `reachLabel` below: the role is typed, but every value of
+  // it comes off the wire. A role this build has not heard of reaches nothing.
+  return REACH[role] ?? 'none';
 }
 
 /**
